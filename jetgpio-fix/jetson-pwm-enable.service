@@ -1,0 +1,11 @@
+[Unit]
+Description=Enable hardware PWM on Jetson Orin Nano 40-pin header (pins 15/32/33)
+After=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jetson-pwm-enable.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,104 +1,85 @@
-# Servo Control on Jetson Orin Nano Super — GPIO Bit-Bang Workaround
+# Hardware PWM on Jetson Orin Nano Super: The Real Fix
 
-## Problem
+## TL;DR
 
-The NVIDIA Jetson Orin Nano Super has hardware PWM chips (`pwmchip0` through `pwmchip3`) visible via sysfs, but **none of them are routed to the 40-pin GPIO header**. The standard `Jetson.GPIO` library's software PWM is too imprecise for hobby servo control (pulse widths drift by hundreds of microseconds, causing jitter and failed positioning).
+Hardware PWM on the Orin Nano Super's 40-pin header requires two things that neither the JetPack docs nor `jetson-gpio` do for you:
 
-This means the conventional approaches to servo control on Jetson boards do not work on the Orin Nano Super:
+1. Enable the PWM controller **clocks** via `bpmp` debug.
+2. Write the **pinmux** registers so the pads route to PWM instead of GPIO.
 
-- **sysfs hardware PWM** — chips accept writes, report as enabled, but produce no electrical signal on header pins
-- **Pinmux fixes via devmem** — register writes succeed but do not route PWM to pins
-- **Jetson.GPIO software PWM** — too much timing jitter for servo signal requirements
+Do both and sysfs PWM just works. The bit-bang workaround originally in this repo is no longer necessary.
 
-## What Was Tested and Failed
+Pin / controller / register map:
 
-| Method | Pins Tested | Result |
-|--------|-------------|--------|
-| sysfs `pwmchip0` | 15, 32, 33 | No signal output |
-| sysfs `pwmchip2` | 15, 32, 33 | No signal output |
-| sysfs `pwmchip3` | 15, 32, 33 | No signal output |
-| Pinmux devmem fixes | 15, 32, 33 | Register writes succeed, still no signal |
-| Jetson.GPIO software PWM | 33 | Signal present but too imprecise for servos |
+| Header pin | SoC GPIO | Controller     | pwmchip  | Pinmux reg   | Pinmux value |
+|------------|----------|----------------|----------|--------------|--------------|
+| 15         | GPIO12   | PWM1 @ 3280000 | pwmchip0 | `0x02440020` | `0x00000404` |
+| 32         | GPIO07   | PWM7 @ 32e0000 | pwmchip3 | `0x02434080` | `0x00000404` |
+| 33         | GPIO13   | PWM5 @ 32c0000 | pwmchip2 | `0x02434040` | `0x00000405` |
 
-**Note:** Pin 15 is documented by the [JETGPIO](https://github.com/Rubberazer/JETGPIO) library as the only hardware PWM output on the Orin Nano. Our testing showed no signal output on Pin 15 even after applying the pinmux fix.
+## Credits
 
-## What Works: Python Bit-Bang on Pin 33
+* **Rubberazer** (author of [JETGPIO](https://github.com/Rubberazer/JETGPIO)) identified that PWM clocks are disabled by default on Orin and must be enabled through `/sys/kernel/debug/bpmp/debug/clk/pwmN/state`. JETGPIO v1.2 ships the original `pwm_enabler.sh`.
+* **lhoang** (NVIDIA) provided the pinmux register addresses and values on the NVIDIA DevTalk thread linked below.
+* Discussion thread: [Hardware PWM not routed to 40-pin header on Orin Nano Super (JetPack 6 / L4T R36)](https://forums.developer.nvidia.com/t/hardware-pwm-not-routed-to-40-pin-header-on-orin-nano-super-jetpack-6-l4t-r36-sysfs-writes-succeed-but-no-signal-output/366289).
 
-Direct GPIO bit-bang toggling using `Jetson.GPIO` on **Pin 33** (BOARD numbering) produces clean, consistent servo signals. The Python `time.sleep()` timing is sufficient for the 1000-2000 us pulse widths that hobby servos require.
-
-## Wiring
-
-```
-Jetson Orin Nano Super              Servo
-40-Pin Header                       Connector
-┌──────────┐                       ┌─────────┐
-│ Pin 4  (5V)  ├───── Red ────────┤ VCC     │
-│ Pin 6  (GND) ├───── Brown ──────┤ GND     │
-│ Pin 33 (GPIO)├───── Orange ─────┤ Signal  │
-└──────────┘                       └─────────┘
-```
-
-See `wiring.txt` for the full ASCII diagram.
-
-## Quick Start
-
-### Python (recommended)
+## Quick install (persistent across reboots)
 
 ```bash
-sudo python3 servo_sweep.py
+sudo install -m 0755 jetgpio-fix/jetson-pwm-enable.sh /usr/local/sbin/jetson-pwm-enable.sh
+sudo install -m 0644 jetgpio-fix/jetson-pwm-enable.service /etc/systemd/system/jetson-pwm-enable.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now jetson-pwm-enable.service
 ```
 
-This sweeps the servo back and forth between 1010 us and 1990 us on Pin 33. Press Ctrl+C to stop cleanly.
+The service runs once at boot, enables the PWM clocks, and writes the pinmux registers for pins 15, 32, and 33.
 
-### Minimal Example
+## Driving a servo (sysfs, hardware PWM)
 
-```python
-import Jetson.GPIO as GPIO
-import time
-
-GPIO.setmode(GPIO.BOARD)
-GPIO.setup(33, GPIO.OUT, initial=GPIO.LOW)
-
-try:
-    while True:
-        # 1500us pulse = center position, 20ms period (50Hz)
-        GPIO.output(33, GPIO.HIGH)
-        time.sleep(0.0015)
-        GPIO.output(33, GPIO.LOW)
-        time.sleep(0.0185)
-except KeyboardInterrupt:
-    pass
-finally:
-    GPIO.output(33, GPIO.LOW)
-    GPIO.cleanup()
-```
-
-### C Version
-
-A C implementation (`servo_pwm.c`) is also provided for users who want tighter timing via `clock_nanosleep` and real-time scheduling. In practice, the Python version performed comparably for standard hobby servos.
+After the service is active:
 
 ```bash
-gcc -O2 -o servo_pwm servo_pwm.c
-sudo ./servo_pwm /dev/gpiochip0 43 sweep
+# Pin 33 (PWM5)
+echo 0 | sudo tee /sys/class/pwm/pwmchip2/export
+echo 20000000 | sudo tee /sys/class/pwm/pwmchip2/pwm0/period       # 50 Hz
+echo 1500000  | sudo tee /sys/class/pwm/pwmchip2/pwm0/duty_cycle   # 1.5 ms neutral
+echo 1        | sudo tee /sys/class/pwm/pwmchip2/pwm0/enable
 ```
 
-## Tested On
+A complete sweep example is in `jetgpio-fix/servo_test.sh`.
 
-- **Board:** NVIDIA Jetson Orin Nano Super (8GB)
-- **JetPack:** 6
-- **L4T:** R36
-- **Jetson.GPIO:** 2.1.12
-- **Power Mode:** MAXN Super
+Wiring (standard hobby servo):
+
+```
+Pin 2 or 4  (5V)  ──── red    ─── VCC
+Pin 6       (GND) ──── brown  ─── GND
+Pin 33      (PWM5)──── orange ─── Signal
+```
+
+Pin 33 is a 3.3 V signal. Micro servos (SG90/MG90S class) typically accept it directly. Anything larger should use an external 5 V supply with common ground, not the header's 5 V rail.
+
+## Tested on
+
+* Board: NVIDIA Jetson Orin Nano Super (8 GB)
+* JetPack 6, L4T R36, kernel 5.15.148-tegra
+* Power mode: MAXN Super
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `servo_sweep.py` | Python bit-bang servo sweep script |
-| `servo_pwm.c` | C bit-bang servo control (nanosecond timing) |
-| `wiring.txt` | ASCII wiring diagram |
-| `findings.md` | Detailed technical investigation notes |
+| Path | Purpose |
+|------|---------|
+| `jetgpio-fix/jetson-pwm-enable.sh` | Clock + pinmux enable script (installs to `/usr/local/sbin`) |
+| `jetgpio-fix/jetson-pwm-enable.service` | Systemd unit that runs the script at boot |
+| `jetgpio-fix/servo_test.sh` | Sysfs servo sweep on pin 33 |
+| `jetgpio-fix/pwm_enabler.sh` | Original clock-only enabler from JETGPIO v1.2 |
+| `jetgpio-fix/pwm_enable.service` | Original JETGPIO systemd unit |
+| `servo_sweep.py`, `servo_pwm.c` | Legacy bit-bang workaround from before the real fix was known. Kept for reference. |
+| `findings.md`, `wiring.txt` | Original investigation notes and wiring diagram. |
+
+## Historical note
+
+The first version of this repo documented a Python/C bit-bang workaround after hardware PWM appeared to be unroutable to the header. That conclusion was wrong: the pinmux writes the original investigation tried were the right approach, but the PWM controller clocks had to be enabled first. Without the clock, the pinmux change has no visible effect, which is what made the original debugging so confusing.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
