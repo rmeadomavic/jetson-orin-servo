@@ -66,10 +66,32 @@ Direct GPIO toggling via `Jetson.GPIO` (which uses the kernel GPIO character dev
 
 Python's `time.sleep()` on the Orin Nano Super has sufficient precision (~50us jitter) for hobby servo control.
 
+## Untested: jetson-io.py (Potential Hardware PWM Fix)
+
+An [NVIDIA employee on the developer forums](https://forums.developer.nvidia.com/) suggested using `/opt/nvidia/jetson-io/jetson-io.py` to configure PWM for pins 15, 32, and 33. This tool configures **device tree overlays**, not just pinmux registers — which is a layer above what `devmem` touches.
+
+The devmem pinmux approach only sets the pin multiplexer. But hardware PWM also requires:
+- A device tree overlay binding the pin to the PWM controller
+- PWM controller clock enablement
+- Correct SFIO function assignment
+
+`jetson-io.py` handles all of these. The fact that our devmem writes succeeded but produced no output is consistent with a missing device tree overlay rather than a hard hardware limitation.
+
+**Pinmux register values from NVIDIA (for reference):**
+
+| HAT Pin | Signal / SFIO | Pinmux Register | Value |
+|---------|---------------|-----------------|-------|
+| 15 | GPIO12 / GP88_PWM1 | 0x02440020 | 0x00000404 |
+| 32 | GPIO07 / GP113_PWM7 | 0x02434080 | 0x00000404 |
+| 33 | GPIO13 / GP115 | 0x02434040 | 0x00000405 |
+
+**Status:** Not yet tested. Requires interactive TUI session and a reboot.
+
 ## Recommendations
 
-1. **Use Python bit-bang** (`servo_sweep.py`) for simplicity
-2. **Use C bit-bang** (`servo_pwm.c`) only if you need deterministic sub-microsecond timing
-3. **Do not waste time on sysfs PWM** — it will appear to work but produces no output
-4. **Pin 33** is confirmed working; other GPIO pins likely work too
-5. For multi-servo or precision applications, use an external PCA9685 I2C servo driver
+1. **Try `jetson-io.py` first** — run `sudo /opt/nvidia/jetson-io/jetson-io.py` and configure PWM for pin 33 (or 15/32). This may enable true hardware PWM and eliminate the need for bit-bang.
+2. **Use Python bit-bang** (`servo_sweep.py`) as the proven fallback
+3. **Use C bit-bang** (`servo_pwm.c`) only if you need deterministic sub-microsecond timing
+4. **Do not use raw devmem alone** — pinmux writes without a device tree overlay are insufficient
+5. **Pin 33** is confirmed working for bit-bang; other GPIO pins likely work too
+6. For multi-servo or precision applications, use an external PCA9685 I2C servo driver

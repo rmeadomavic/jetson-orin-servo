@@ -4,10 +4,12 @@
 
 The NVIDIA Jetson Orin Nano Super has hardware PWM chips (`pwmchip0` through `pwmchip3`) visible via sysfs, but **none of them are routed to the 40-pin GPIO header**. The standard `Jetson.GPIO` library's software PWM is too imprecise for hobby servo control (pulse widths drift by hundreds of microseconds, causing jitter and failed positioning).
 
-This means the conventional approaches to servo control on Jetson boards do not work on the Orin Nano Super:
+This is likely a **device tree overlay** issue, not a hard hardware limitation. The PWM controllers exist but the default device tree does not route them to header pins. NVIDIA's `jetson-io.py` tool (`/opt/nvidia/jetson-io/jetson-io.py`) may fix this by configuring the correct device tree overlay, clock routing, and pinmux — but this has not yet been tested (see `findings.md`).
+
+Without `jetson-io.py` configuration, the conventional approaches do not work:
 
 - **sysfs hardware PWM** — chips accept writes, report as enabled, but produce no electrical signal on header pins
-- **Pinmux fixes via devmem** — register writes succeed but do not route PWM to pins
+- **Pinmux fixes via devmem** — register writes succeed but do not route PWM (device tree overlay still missing)
 - **Jetson.GPIO software PWM** — too much timing jitter for servo signal requirements
 
 ## What Was Tested and Failed
