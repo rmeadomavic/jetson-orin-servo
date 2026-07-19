@@ -2,7 +2,7 @@
 
 ## Summary
 
-Hardware PWM chips on the Jetson Orin Nano Super (`pwmchip0` through `pwmchip3`) exist in sysfs and accept configuration writes, but **no electrical PWM signal is routed to any pin on the 40-pin GPIO header**. The Jetson.GPIO software PWM has too much jitter for servo control. The working solution is GPIO bit-bang toggling on Pin 33.
+In the tested JetPack 6 / L4T R36 configuration, the swept PWM chips accepted sysfs configuration writes, but **no electrical PWM signal was observed on the tested 40-pin header pins (15, 32, and 33)**. Jetson.GPIO software PWM had too much jitter for the tested servo. GPIO bit-bang toggling on Pin 33 worked in this setup.
 
 ## Test Environment
 
@@ -23,7 +23,7 @@ Hardware PWM chips on the Jetson Orin Nano Super (`pwmchip0` through `pwmchip3`)
 | 4 | Pinmux devmem fix + sysfs PWM | 15 | No | No | Wrote pinmux register to PWM mode, still no signal |
 | 5 | Pinmux devmem fix + sysfs PWM | 32 | No | No | Same as Pin 15 |
 | 6 | Pinmux devmem fix + sysfs PWM | 33 | No | No | Same as Pin 15 |
-| 7 | Jetson.GPIO software PWM | 33 | Yes (noisy) | Erratic | Pulse width jitter ~200-500us, servo buzzes/vibrates |
+| 7 | Jetson.GPIO software PWM | 33 | Yes (noisy) | Erratic | Informal estimate: pulse-width jitter ~200-500us; servo buzzes/vibrates (no captured scope data) |
 | 8 | **Python bit-bang (time.sleep)** | **33** | **Yes** | **Yes** | **Consistent 50Hz, some jitter but servo tracks** |
 | 9 | **C bit-bang (clock_nanosleep)** | **33** | **Yes** | **Yes** | **Tighter timing but comparable servo behavior** |
 
@@ -40,7 +40,7 @@ echo 1 > /sys/class/pwm/pwmchip0/pwm0/enable
 cat /sys/class/pwm/pwmchip0/pwm0/enable  # Returns "1"
 ```
 
-The registers accept writes and report the expected state, but the PWM signals are not physically routed to header pins. This is a hardware/pinmux routing issue specific to the Orin Nano Super carrier board, not a software configuration problem.
+The registers accepted writes and reported the expected state, but no PWM signal was observed on pins 15, 32, or 33 for the pwmchips swept under JetPack 6 / L4T R36. These tests do not establish the routing behavior of every pwmchip, header pin, carrier-board revision, or software configuration.
 
 ## Comparison to Older Jetson Nano B01
 
@@ -64,12 +64,12 @@ Direct GPIO toggling via `Jetson.GPIO` (which uses the kernel GPIO character dev
 3. Set pin LOW
 4. Sleep for remainder of 20ms period
 
-Python's `time.sleep()` on the Orin Nano Super has sufficient precision (~50us jitter) for hobby servo control.
+In this test, Python's `time.sleep()` was sufficient for the hobby servo used. The observed jitter was informally estimated at ~50us; no scope capture or defined measurement sample was retained.
 
 ## Recommendations
 
 1. **Use Python bit-bang** (`servo_sweep.py`) for simplicity
-2. **Use C bit-bang** (`servo_pwm.c`) only if you need deterministic sub-microsecond timing
-3. **Do not waste time on sysfs PWM** — it will appear to work but produces no output
+2. **Use C bit-bang** (`servo_pwm.c`) for tighter timing. `SCHED_FIFO` plus busy-waiting can reduce jitter, but timing remains subject to Linux scheduling and is not deterministic
+3. **Treat sysfs PWM cautiously in this tested configuration** — it appeared to work but produced no observed output on pins 15, 32, or 33 for the pwmchips swept
 4. **Pin 33** is confirmed working; other GPIO pins likely work too
 5. For multi-servo or precision applications, use an external PCA9685 I2C servo driver

@@ -2,9 +2,9 @@
 
 ## Problem
 
-The NVIDIA Jetson Orin Nano Super has hardware PWM chips (`pwmchip0` through `pwmchip3`) visible via sysfs, but **none of them are routed to the 40-pin GPIO header**. The standard `Jetson.GPIO` library's software PWM is too imprecise for hobby servo control (pulse widths drift by hundreds of microseconds, causing jitter and failed positioning).
+In the tested JetPack 6 / L4T R36 configuration, the NVIDIA Jetson Orin Nano Super exposed hardware PWM chips through sysfs, but **no electrical PWM output was observed on pins 15, 32, or 33 for the pwmchips swept**. This result does not establish routing for every pwmchip, header pin, carrier-board revision, or software configuration. The standard `Jetson.GPIO` library's software PWM was too imprecise for the tested hobby servo; pulse-width drift was informally estimated in the hundreds of microseconds without captured scope data.
 
-This means the conventional approaches to servo control on Jetson boards do not work on the Orin Nano Super:
+In this tested configuration, the conventional approaches below did not work reliably:
 
 - **sysfs hardware PWM** — chips accept writes, report as enabled, but produce no electrical signal on header pins
 - **Pinmux fixes via devmem** — register writes succeed but do not route PWM to pins
@@ -29,14 +29,16 @@ Direct GPIO bit-bang toggling using `Jetson.GPIO` on **Pin 33** (BOARD numbering
 ## Wiring
 
 ```
-Jetson Orin Nano Super              Servo
-40-Pin Header                       Connector
-┌──────────┐                       ┌─────────┐
-│ Pin 4  (5V)  ├───── Red ────────┤ VCC     │
-│ Pin 6  (GND) ├───── Brown ──────┤ GND     │
-│ Pin 33 (GPIO)├───── Orange ─────┤ Signal  │
-└──────────┘                       └─────────┘
+Jetson Orin Nano Super       External 5V Supply       Servo
+40-Pin Header                                          Connector
+┌──────────┐                ┌──────────┐              ┌─────────┐
+│ Pin 6  (GND) ├────────────┤ GND      ├──── Brown ──┤ GND     │
+│ Pin 33 (GPIO)├─────────────────────────── Orange ──┤ Signal  │
+└──────────┘                │ +5V      ├──── Red ────┤ VCC     │
+                            └──────────┘              └─────────┘
 ```
+
+An external regulated 5V supply with its ground connected to Jetson ground is the recommended default for servo power. For brief bench testing only, a single micro servo may be powered from a 5V header pin if its startup and stall current are known to be safe; stall current can substantially exceed the roughly 250mA running-current figure.
 
 See `wiring.txt` for the full ASCII diagram.
 

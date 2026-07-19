@@ -2,8 +2,7 @@
 
 All notable changes to **Jetson Orin Servo** are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
@@ -17,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 -
 
 ### Security
-- Enabled GitHub Dependabot vulnerability alerts and automated security update PRs.
-- Enabled GitHub secret scanning + push protection.
+- Added Dependabot configuration for automated dependency update PRs.
 
 [Unreleased]: https://github.com/rmeadomavic/jetson-orin-servo/commits/main
